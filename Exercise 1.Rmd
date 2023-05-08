@@ -1,0 +1,47 @@
+---
+title: "Exercise 1"
+output: html_document
+date: "2023-05-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1: Google 401k increase 
+ 
+Control: (NR) Observation 1)  (No Treatment) Observation 2
+
+8,000: (NR) (Observation 1) (X Treatment)  Observation 2 
+
+2,000: (NR)(Observation 1) (Y Treatment)   Observation 2
+
+**Threats to Inference**
+Group not random, leaving it vulnerable to selection bias.
+The aggressive reminders may have caused the savings, not the financial target
+Other factors that could influence: age, income level, student debt, family background, savings targets.
+
+## Question 2: Operation Wallet Drop
+**Steps taken to improve research design**
+Sampling Bias:200 wallets in 20 cities to create broader test
+
+Hawthorne Effect: People who found wallets didn't know they were being watched.
+
+Confounding variables: Remove any excuse not to return the wallet: no photo id, small amount of money and pesos, ultrasound, phone number, business card.
+
+Selection and Sampling Bias: Left wallets in different "types" of neighbourhoods, men and women's bathrooms, big and small cities, high and low-income.
+
+Asked 8 detailed questions to further understand the people that found the wallet, under what circumstances, and motivation.
+
+## Question 3: Consultants
+
+Control : Mean = -.062  Total = -6.21
+Tactic A: Mean =  .0326 Total = 3.26
+Tactic B: Mean = -.1198 Total = -11.98
+
+Tactic A could be a result of the Hawthorne Effect. Workers know a change will happen and improve as it is being applied. The same thing happens with Tactic B, but to the opposite effect.
+Tactic A applied after a run of negative performance. 
+Knowledege of tactic almost acts as a psychological jolt to the worker. Could disrupt monotony.
+
+Worker 2 - higher variance than 1,2
+
