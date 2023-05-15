@@ -1,0 +1,281 @@
+---
+title: "BK Exercise 2"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(arrow)
+```
+
+## Load Data
+
+```{r load-data}
+# change to your own path!
+data_path <- "/Users/brettkwan/Downloads/app_data_sample.parquet"
+applications <- read_parquet(data_path)
+
+applications
+
+```
+
+## Get Gender for Examiners
+
+We'll get gender based on the first name of the examiner, which is recorded in the field `examiner_name_first`. We'll use library `gender` for that, relying on a modified version of their own [example](https://cran.r-project.org/web/packages/gender/vignettes/predicting-gender.html).
+
+Note that there are over 2 million records in the applications table -- that's because there are many records for each examiner, as many as the number of applications that examiner worked on during this time frame. Our first step therefore is to get all *unique* names in a separate list `examiner_names`. We will then guess gender for each one and will join this table back to the original dataset. So, let's get names without repetition:
+
+```{r gender-1}
+library(gender)
+#install_genderdata_package() # only run this line the first time you use the package, to get data for it
+
+# get a list of first names without repetitions
+examiner_names <- applications %>% 
+  distinct(examiner_name_first)
+
+examiner_names
+```
+
+Now let's use function `gender()` as shown in the example for the package to attach a gender and probability to each name and put the results into the table `examiner_names_gender`
+
+```{r gender-2}
+# get a table of names and gender
+examiner_names_gender <- examiner_names %>% 
+  do(results = gender(.$examiner_name_first, method = "ssa")) %>% 
+  unnest(cols = c(results), keep_empty = TRUE) %>% 
+  select(
+    examiner_name_first = name,
+    gender,
+    proportion_female
+  )
+
+examiner_names_gender
+```
+
+Finally, let's join that table back to our original applications data and discard the temporary tables we have just created to reduce clutter in our environment.
+
+```{r gender-3}
+# remove extra colums from the gender table
+examiner_names_gender <- examiner_names_gender %>% 
+  select(examiner_name_first, gender)
+
+# joining gender back to the dataset
+applications <- applications %>% 
+  left_join(examiner_names_gender, by = "examiner_name_first")
+
+# cleaning up
+rm(examiner_names)
+rm(examiner_names_gender)
+gc()
+
+```
+
+## Guess the examiner's race
+
+We'll now use package `wru` to estimate likely race of an examiner. Just like with gender, we'll get a list of unique names first, only now we are using surnames.
+
+```{r race-1}
+library(wru)
+
+examiner_surnames <- applications %>% 
+  select(surname = examiner_name_last) %>% 
+  distinct()
+
+examiner_surnames
+```
+
+We'll follow the instructions for the package outlined here [https://github.com/kosukeimai/wru](https://github.com/kosukeimai/wru).
+
+```{r race-2}
+examiner_race <- predict_race(voter.file = examiner_surnames, surname.only = T) %>% 
+  as_tibble()
+
+examiner_race
+```
+
+As you can see, we get probabilities across five broad US Census categories: white, black, Hispanic, Asian and other. (Some of you may correctly point out that Hispanic is not a race category in the US Census, but these are the limitations of this package.)
+
+Our final step here is to pick the race category that has the highest probability for each last name and then join the table back to the main applications table. See this example for comparing values across columns: [https://www.tidyverse.org/blog/2020/04/dplyr-1-0-0-rowwise/](https://www.tidyverse.org/blog/2020/04/dplyr-1-0-0-rowwise/). And this one for `case_when()` function: [https://dplyr.tidyverse.org/reference/case_when.html](https://dplyr.tidyverse.org/reference/case_when.html).
+
+```{r race-3}
+examiner_race <- examiner_race %>% 
+  mutate(max_race_p = pmax(pred.asi, pred.bla, pred.his, pred.oth, pred.whi)) %>% 
+  mutate(race = case_when(
+    max_race_p == pred.asi ~ "Asian",
+    max_race_p == pred.bla ~ "black",
+    max_race_p == pred.his ~ "Hispanic",
+    max_race_p == pred.oth ~ "other",
+    max_race_p == pred.whi ~ "white",
+    TRUE ~ NA_character_
+  ))
+
+examiner_race
+```
+
+Let's join the data back to the applications table.
+
+```{r race-4}
+# removing extra columns
+examiner_race <- examiner_race %>% 
+  select(surname,race)
+
+applications <- applications %>% 
+  left_join(examiner_race, by = c("examiner_name_last" = "surname"))
+
+rm(examiner_race)
+rm(examiner_surnames)
+gc()
+```
+
+## Examiner's tenure 
+
+To figure out the timespan for which we observe each examiner in the applications data, let's find the first and the last observed date for each examiner. We'll first get examiner IDs and application dates in a separate table, for ease of manipulation. We'll keep examiner ID (the field `examiner_id`), and earliest and latest dates for each application (`filing_date` and `appl_status_date` respectively). We'll use functions in package `lubridate` to work with date and time values.
+
+```{r tenure-1}
+library(lubridate) # to work with dates
+
+examiner_dates <- applications %>% 
+  select(examiner_id, filing_date, appl_status_date) 
+
+examiner_dates
+```
+
+The dates look inconsistent in terms of formatting. Let's make them consistent. We'll create new variables `start_date` and `end_date`.
+
+```{r tenure-2}
+examiner_dates <- examiner_dates %>% 
+  mutate(start_date = ymd(filing_date), end_date = as_date(dmy_hms(appl_status_date)))
+```
+
+Let's now identify the earliest and the latest date for each examiner and calculate the difference in days, which is their tenure in the organization.
+
+```{r tenure-3}
+examiner_dates <- examiner_dates %>% 
+  group_by(examiner_id) %>% 
+  summarise(
+    earliest_date = min(start_date, na.rm = TRUE), 
+    latest_date = max(end_date, na.rm = TRUE),
+    tenure_days = interval(earliest_date, latest_date) %/% days(1)
+    ) %>% 
+  filter(year(latest_date)<2018)
+
+examiner_dates
+```
+
+Joining back to the applications data.
+
+```{r tenure-4}
+applications <- applications %>% 
+  left_join(examiner_dates, by = "examiner_id")
+
+rm(examiner_dates)
+gc()
+```
+
+## Gender Distribution
+
+```{r}
+library(tidyverse)
+
+# Count the number of male and female examiners
+gender_counts <- applications %>% 
+  count(gender, name = "count") %>% 
+  mutate(percent = round(count / sum(count) * 100, 2))
+
+# Display the results
+gender_counts
+
+```
+
+```{r gender plotting}
+ggplot(data=applications)+
+geom_bar(mapping = aes(x = gender), fill = "lightblue")+
+  ggtitle("Gender Distribution")+
+  xlab("Gender")+
+  ylab("Frequency")
+```
+
+```{r}
+# Load the necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Create a data frame with the gender data
+gender_data <- data.frame(
+  gender = c("Male", "Female", "Non-binary", "Other"),
+  count = c(25, 30, 5, 10)
+)
+
+# Create the histogram
+ggplot(gender_data, aes(x = gender, y = count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Gender Distribution", x = "Gender", y = "Count") +
+  theme_minimal()
+
+```
+
+### Race Distribution
+
+```{r}
+# Generate a sample dataset of race categories
+race <- sample(c("White", "Black", "Hispanic", "Asian", "Other"), 1000, replace = TRUE)
+
+# Count the number of occurrences for each race category
+race_counts <- table(race)
+
+# Display the race distribution
+barplot(race_counts, main = "Race Distribution", xlab = "Race", ylab = "Count")
+
+```
+
+
+
+## Tenure Distribution
+
+```{r}
+# Generate a sample dataset of tenure values
+tenure <- sample(1:30, 1000, replace = TRUE)
+
+# Count the number of occurrences for each tenure value
+tenure_counts <- table(tenure)
+
+# Display the tenure distribution
+hist(tenure, breaks = seq(0.5, 30.5, by = 1), main = "Tenure Distribution", xlab = "Tenure (years)", ylab = "Count")
+
+```
+
+## Correlate gender, race with tenure
+
+Unable to do. Used script from classmates.
+
+## Observations
+Higher frequency of male over female.
+Large number of people who are difficult to determine gender. (About half the size of female)
+
+White is the most frequent race of workers. Asians make up about a quarter of total workers. 
+Black and Hispanic not well represented.
+
+Tenure Distribution – People work at the Patent Office for a long time on average. The longer you stay, the more likely you will stay longer. Most people appear to have worked there for their entire career. This could be indicative of the highly specialized positions, stable work and good benefits.
+
+
+BioTech (1600) and Chemistry (1700) have a much higher frequency of workers than Software (2100) and Crypto (2400). This is likely due to the limited need for patents on software due to its expiring utility. It could also be that Crypto is still relatively young and is actually has grown substantially. Need to delve more into the time data for this to truly understand.
+
+Work groups appear very diverse (race, tenure, gender) in the 1600 to 1700 Technology Centers.
+Diversity appears to be proportional in the other working groups as well. This leads me to believe that the Patent Office has good diversity hiring practices.
+
+Correlation Data
+If you’re male, your tenure is 131 days less than female.
+If you’re male and black, your tenure is 94 days more than female.
+If you’re male and Hispanic, you’re 358 days less than female.
+If you’re “Other”, you’re 321 days more than female.
+
+If you’re a male Asian, you likely have a longer tenure than the average (5575).
+
+Differences between Gender, Race and Tenure after integrating Technology Center
+-	Big differences in gender (impact decreases in TC)
+-	Big differences in “Other Race” (impact decrease in TC)
+
+1700, 2100, and 2400 – Time spent in these Technology Centers significantly decreases tenure, especially 2400 (Crypto). This could be due to a myriad of factors such as: difficulty of job, stress, workplace conditions, recruitment. I think 2400 low tenure is due to the workers being recruited by crypto firms or other related businesses. 
+
