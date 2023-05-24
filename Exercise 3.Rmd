@@ -1,0 +1,193 @@
+---
+title: "Exercise 3"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading previous data
+```{r}
+library(arrow)
+
+# Loading previous data
+applications <- arrow::read_feather("/Users/brettkwan/Desktop/McGill/People Analytics/app_data_starter.feather")
+
+```
+
+## Creating 85% subsample and 15% holdout data
+
+```{r}
+library(dplyr)
+
+# Create the subsample (85%)
+subsample <- applications %>% 
+  sample_frac(0.85, replace = FALSE)
+
+# Create the holdout data (15%)
+holdout <- applications %>%
+  anti_join(subsample)
+
+```
+## Count the number of unique examiner_id
+```{r}
+# Count the number of unique examiner_ids in the entire dataset
+unique_examiner_ids <- applications %>%
+  distinct(examiner_id) %>%
+  nrow()
+
+# Print the result
+unique_examiner_ids
+
+```
+
+
+
+## attempt 1 define turnover
+use disposal_type. but i also tried to account for retirements after the completion of their final application.
+```{r}
+# Calculate turnover rate based on disposal_type
+turnover_rate <- applications %>%
+  filter(disposal_type %in% c("ABN", "ISS")) %>%
+  distinct(examiner_id) %>%
+  nrow() / unique_examiner_ids * 100
+
+# Print the turnover rate
+cat("Overall turnover rate:", turnover_rate, "%\n")
+
+
+```
+
+
+
+## attempt 2 define turnover
+Step 1: Determine application status
+
+Identify the applications that have a disposal_type of "ISS" (issued) or "ABN" (abandoned). Exclude the applications with "PEND" (pending) as their disposal_type.
+Step 2: Calculate turnover rate
+
+Divide the number of applications with a disposal_type other than "PEND" by the total number of unique applications.
+```{r}
+library(tidyverse)
+
+# Step 2: Determine application status
+subsample <- subset(applications, disposal_type != "PEND")
+
+# Step 3: Calculate turnover rate
+total_applications <- n_distinct(applications$application_number)
+non_pending_applications <- n_distinct(subsample$application_number)
+turnover_rate <- non_pending_applications / total_applications
+
+# Print the turnover rate
+cat("Overall turnover rate:", turnover_rate)
+
+```
+
+### turnover rate between 2010 and 2015.
+```{r}
+library(dplyr)
+library(lubridate)
+
+# Convert earliest_date and latest_date to Date type
+subsample <- subsample %>%
+  mutate(earliest_date = as.Date(earliest_date),
+         latest_date = as.Date(latest_date))
+
+# Filter the subsample data for the time period between 2005 and 2015
+filtered_data <- subsample %>%
+  filter(earliest_date >= as.Date("2005-01-01") & latest_date <= as.Date("2015-12-31"))
+
+# Join with first_last_days to identify unique examiner_id's working during the specified time period
+working_examiners <- filtered_data %>%
+  inner_join(first_last_days, by = "examiner_id") %>%
+  filter(first_day <= as.Date("2015-01-01") & last_day >= as.Date("2015-01-01"))
+
+# Calculate the turnover rate for the identified examiners
+total_examiners <- n_distinct(working_examiners$examiner_id)
+turnover_examiners <- sum(working_examiners$disposal_type %in% c("ISS", "ABN"))
+turnover_rate <- turnover_examiners / total_examiners
+
+# Print the turnover rate
+cat("Turnover rate between 2005 and 2015:", turnover_rate)
+
+```
+
+
+##  turnover rate by race Between 2005 and 2015
+```{r}
+library(dplyr)
+library(lubridate)
+
+# Convert earliest_date and latest_date to Date type
+subsample <- subsample %>%
+  mutate(earliest_date = as.Date(earliest_date),
+         latest_date = as.Date(latest_date))
+
+# Filter the subsample data for the time period between 2005 and 2015
+filtered_data <- subsample %>%
+  filter(earliest_date >= as.Date("2005-01-01") & latest_date <= as.Date("2015-12-31"))
+
+# Join with first_last_days to identify unique examiner_id's working during the specified time period
+working_examiners <- filtered_data %>%
+  inner_join(first_last_days, by = "examiner_id") %>%
+  filter(first_day <= as.Date("2015-01-01") & last_day >= as.Date("2015-01-01"))
+
+# Calculate the turnover rate by race for the identified examiners
+turnover_rate_by_race <- working_examiners %>%
+  group_by(race) %>%
+  summarise(turnover_examiners = sum(disposal_type %in% c("ISS", "ABN")),
+            total_examiners = n_distinct(examiner_id),
+            turnover_rate = turnover_examiners / total_examiners)
+
+# Print the turnover rate by race
+print(turnover_rate_by_race)
+
+```
+
+
+## OLS Linear Regression - converting gender and race first
+```{r}
+subsample$race <- factor(subsample$race, levels = c('black', 'white', 'hispanic', 'asian'))
+
+```
+```{r}
+subsample$gender <- factor(subsample$gender, levels = c('male', 'female'))
+
+```
+### ols linear regression
+
+library(dplyr)
+library(lubridate)
+
+# Convert earliest_date and latest_date to Date type
+subsample <- subsample %>%
+  mutate(earliest_date = as.Date(earliest_date),
+         latest_date = as.Date(latest_date))
+
+# Filter the subsample data for the time period between 2005 and 2015
+filtered_data <- subsample %>%
+  filter(earliest_date >= as.Date("2005-01-01") & latest_date <= as.Date("2015-12-31"))
+
+# Ensure 'race' contains the correct categories and is encoded as a factor variable
+filtered_data$race <- factor(filtered_data$race, levels = c('black', 'white', 'hispanic', 'asian'))
+
+# Ensure 'gender' contains the categories 'male' and 'female' and is encoded as a factor variable
+filtered_data$gender <- factor(filtered_data$gender, levels = c('male', 'female'))
+
+# Perform OLS linear regression
+model <- lm(turnover_rate ~ tenure_days + race + gender, data = filtered_data)
+
+# Make predictions on the subsample dataset
+subsample_predictions <- predict(model, newdata = filtered_data)
+
+# Print the predicted turnover values
+print(subsample_predictions)
+
+
+```
+
+
+
+## Oberservations
+Very difficult to find ways to define turnover. So many different variables to take into consideration. gradually, learned disposal_type would play a factor. Neeeded to understand the implications of "ISS" "PEND" and "ABN". Tenure_Days and timing of the tests would be needed as well. Tried different methods (specific time period, tenure_days, and different definitions of turnover.)
