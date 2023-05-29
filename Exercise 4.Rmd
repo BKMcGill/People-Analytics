@@ -1,0 +1,322 @@
+---
+title: "Exercise 4"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Load Data
+```{r, include=FALSE}
+library(arrow)
+applications <- read_feather("/Users/brettkwan/Desktop/McGill/People Analytics/app_data_starter.feather")
+```
+### Define Turnover by Creating New Variables
+```{r, include=FALSE}
+library(dplyr)
+library(lubridate)
+
+# Convert appl_status_date to date
+applications <- applications %>%
+  mutate(appl_status_date = dmy_hms(appl_status_date))
+
+# Create year variable
+applications <- applications %>%
+  mutate(year = year(appl_status_date))
+
+```
+
+### Filter to Prevent Incorrect Years after 2017
+```{r, include=FALSE}
+# Group by examiner_id
+turnover <- applications %>%
+  group_by(examiner_id) %>%
+  summarize(min_year = min(year), max_year = max(year), tc = first(tc), gender = first(gender), race = first(race)) %>%
+  mutate(year_left = if_else(max_year < 2017, max_year + 1, NA_real_))
+
+```
+
+### Calculate Turnover
+```{r,include=FALSE}
+library(tidyverse)
+
+turnover_rate <- turnover %>%
+  group_by(year_left) %>%
+  summarize(turnover_count = n()) %>%
+  mutate(year = year_left - 1)
+
+# Calculate total examiners
+total_examiners <- applications %>%
+  group_by(year) %>%
+  summarize(previous_year_count = n_distinct(examiner_id))
+
+# Join turnover and total examiners dataframes
+turnover_rate <- turnover_rate %>%
+  left_join(total_examiners) %>%
+  mutate(turnover_rate = turnover_count / previous_year_count * 100) %>%
+  select(-year)
+
+# Select data for analysis in 2014
+regression_data <- turnover %>%
+  filter(min_year <= 2014, year_left >= 2015 | is.na(year_left)) %>%
+  mutate(left = if_else(year_left != 2015 | is.na(year_left), 0, 1)) %>%
+  drop_na(gender)
+```
+
+### Create holdout sample
+```{r, include=FALSE}
+holdout_sample <- regression_data %>%
+  slice_sample(prop = 0.15)
+
+# Training set
+training_set <- regression_data %>%
+  anti_join(holdout_sample)
+
+```
+
+### Modelling Gender
+```{r, include=TRUE}
+library(broom)
+
+# Model
+model1 <- lm(data = training_set, left ~ gender + as.factor(tc))
+tidy(model1)
+summary(model1)
+
+# Checking prediction
+holdout_predictions <- predict(model1, newdata = holdout_sample)
+
+# Comparing
+holdout_actuals <- holdout_sample$left
+comparison_data <- data.frame(actuals = holdout_actuals, predictions = holdout_predictions)
+comparison_data <- comparison_data %>%
+  mutate(predictions = if_else(predictions >= 0.5, 1, 0))
+
+# False negative rate
+confusion_matrix <- table(comparison_data$predictions, comparison_data$actuals)
+fnr <- prop.table(confusion_matrix["0", "1"])
+
+# False negative Rate
+fnr
+
+```
+
+### Adding Race
+
+```{r including-race, include=FALSE}
+# Check levels of race in the training_set
+levels(training_set$race)
+
+# Ensure the race variable in the holdout_sample has the same levels
+holdout_sample$race <- factor(holdout_sample$race, levels = levels(training_set$race))
+
+# Model
+model2 <- lm(data = training_set, left ~ gender + as.factor(tc) + race)
+tidy(model2)
+summary(model2)
+
+# Checking prediction
+holdout_predictions2 <- predict(model2, newdata = holdout_sample)
+
+# Comparing
+holdout_actuals2 <- holdout_sample$left
+comparison_data2 <- data.frame(actuals = holdout_actuals2, predictions = holdout_predictions2)
+comparison_data2 <- comparison_data2 %>%
+  mutate(predictions = if_else(predictions >= 0.02, 1, 0))
+
+# False negative rate
+confusion_matrix <- table(comparison_data2$predictions, comparison_data2$actuals)
+
+# Ensure levels are present in the confusion matrix
+if (!"0" %in% rownames(confusion_matrix))
+  confusion_matrix <- rbind(confusion_matrix, "0" = rep(0, ncol(confusion_matrix)))
+if (!"1" %in% rownames(confusion_matrix))
+  confusion_matrix <- rbind(confusion_matrix, "1" = rep(0, ncol(confusion_matrix)))
+
+fnr2 <- prop.table(confusion_matrix["0", "1"])
+
+fnr2
+
+```
+# Starting Exercise 4
+### Finding distinct values of TC
+```{r, include=TRUE}
+# Filter the dataset to include relevant variables
+filtered_data <- applications[, c("examiner_id", "gender", "tc")]
+
+# Remove duplicate entries based on 'examiner_id'
+unique_data <- unique(filtered_data)
+
+# Group the data by 'tc' and 'gender', and count the occurrences
+result <- aggregate(examiner_id ~ tc + gender, data = unique_data, FUN = length)
+
+# Print the result
+print(result)
+
+```
+
+```{r, echo=FALSE}
+# Load the necessary library
+library(ggplot2)
+
+# Filter the dataset to include relevant variables
+filtered_data <- applications[, c("examiner_id", "gender", "tc")]
+
+# Remove duplicate entries based on 'examiner_id'
+unique_data <- unique(filtered_data)
+
+# Calculate the count of 'examiner_id' by 'tc' and 'gender'
+result <- aggregate(examiner_id ~ tc + gender, data = unique_data, FUN = length)
+
+# Plot the histogram
+ggplot(result, aes(x = factor(tc), y = examiner_id, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "TC", y = "Examiners", fill = "Gender") +
+  ggtitle("Gender Distribution by Technology Center") +
+  theme_minimal() +
+  scale_x_discrete(limits = c("1600", "1700", "2100", "2400")) +
+  scale_y_continuous(limits = c(0, 1500), breaks = seq(0, 1500, 200))
+
+```
+
+### Gender Distribution by Art Unit
+
+```{r, include=TRUE}
+# Load the necessary library
+library(ggplot2)
+
+# Filter the dataset to include relevant variables
+filtered_data <- applications[, c("examiner_id", "gender", "examiner_art_unit")]
+
+# Remove duplicate entries based on 'examiner_id'
+unique_data <- unique(filtered_data)
+
+# Calculate the count of 'examiner_id' by 'examiner_art_unit' and 'gender'
+result <- aggregate(examiner_id ~ examiner_art_unit + gender, data = unique_data, FUN = length)
+
+# Plot the histogram
+ggplot(result, aes(x = reorder(factor(examiner_art_unit), -examiner_id), y = examiner_id, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Examiner Art Unit", y = "Examiners", fill = "Gender") +
+  ggtitle("Gender Distribution by Examiner Art Unit") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 5)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+### Create table to show gender distribution by art unit
+```{r, include=TRUE}
+# Load the necessary library
+library(dplyr)
+
+# Filter the dataset to include relevant variables
+filtered_data <- applications %>%
+  distinct(examiner_id, .keep_all = TRUE) %>%
+  select(examiner_id, gender, examiner_art_unit)
+
+# Calculate the count of 'examiner_id' by 'examiner_art_unit' and 'gender'
+result <- filtered_data %>%
+  group_by(examiner_art_unit, gender) %>%
+  summarise(count = n())
+
+# Pivot the table to make gender columns
+result_pivot <- pivot_wider(result, names_from = gender, values_from = count, values_fill = 0)
+
+# Display the table
+result_pivot
+
+```
+
+### Work Groups that are statistically signifcant along gender
+```{r, include=FALSE}
+# Load the necessary library
+library(ggplot2)
+
+# Filter the dataset to include relevant variables
+filtered_data <- applications[, c("examiner_id", "gender", "examiner_art_unit")]
+
+# Remove duplicate entries based on 'examiner_id'
+unique_data <- unique(filtered_data)
+
+# Calculate the count of 'examiner_id' by 'examiner_art_unit' and 'gender'
+result <- aggregate(examiner_id ~ examiner_art_unit + gender, data = unique_data, FUN = length)
+
+# Find the 100 most statistically significant bins
+top_bins <- with(result, levels(reorder(factor(examiner_art_unit), -examiner_id)))[rank(-result$examiner_id) <= 100]
+
+# Plot the histogram
+ggplot(subset(result, examiner_art_unit %in% top_bins), aes(x = reorder(factor(examiner_art_unit), -examiner_id), y = examiner_id, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Working Group", y = "Examiners", fill = "Gender") +
+  ggtitle("Gender Distribution by Working Group") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 5)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+### Rework to find greatest difference in gender by art unit
+```{r, include=TRUE}
+# Assuming your dataset is stored in a variable called 'applications'
+# Remove duplicates based on 'examiner_id' and keep only the first occurrence
+unique_applications <- applications[!duplicated(applications$examiner_id), ]
+
+# Filter out entries without gender values
+filtered_applications <- unique_applications[!is.na(unique_applications$gender), ]
+
+# Calculate the gender distribution by 'examiner_art_unit'
+gender_distribution <- filtered_applications %>%
+  group_by(examiner_art_unit) %>%
+  summarize(
+    male_count = sum(gender == "male"),
+    female_count = sum(gender == "female"),
+    total_count = n()
+  ) %>%
+  mutate(
+    male_proportion = male_count / total_count,
+    female_proportion = female_count / total_count
+  ) %>%
+  select(examiner_art_unit, male_count, male_proportion, female_count, female_proportion, total_count)
+
+# Print the gender distribution table by 'examiner_art_unit'
+print(gender_distribution)
+
+```
+
+### Work group gender distribution
+```{r work group, include=TRUE}
+# Assuming your dataset is stored in a variable called 'applications'
+# Remove duplicates based on 'examiner_id' and keep only the first occurrence
+unique_applications <- applications[!duplicated(applications$examiner_id), ]
+
+# Filter out entries without gender values
+filtered_applications <- unique_applications[!is.na(unique_applications$gender), ]
+
+# Calculate the gender distribution by 'examiner_art_unit'
+gender_distribution <- filtered_applications %>%
+  group_by(
+    examiner_art_unit_bin = ceiling(as.numeric(examiner_art_unit) / 10) * 10
+  ) %>%
+  summarize(
+    male_count = sum(gender == "male"),
+    female_count = sum(gender == "female"),
+    total_count = n()
+  ) %>%
+  mutate(
+    male_proportion = male_count / total_count,
+    female_proportion = female_count / total_count
+  ) %>%
+  select(examiner_art_unit_bin, male_count, male_proportion, female_count, female_proportion, total_count)
+
+# Print the gender distribution table with grouped 'examiner_art_units'
+print(gender_distribution)
+
+```
+
+
+## Observations
+Gender is most equally distributed in 1600. Appear 2100 is most male dominated, followed closely by 2400.
+
+
